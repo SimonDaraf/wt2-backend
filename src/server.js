@@ -6,72 +6,67 @@
  */
 
 import express from 'express'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import logger from 'morgan'
-import helmet from 'helmet'
-import { serviceProvider } from './serviceProvider/serviceBuilder.js'
-import session from 'express-session'
 import { router } from './routes/router.js'
-import { sessionOptions } from './config/sessionOptions.js'
+import { dbPool } from './config/dbConfig.js'
 
 try {
-  console.log('Starting...')
-
-  console.log('Creating application...')
+  // Create the express application.
   const app = express()
-  const directoryFullName = dirname(fileURLToPath(import.meta.url))
-  const baseURL = process.env.BASE_URL || '/'
 
+  // Set up morgan
   app.use(logger('dev'))
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'https://secure.gravatar.com', 'https://gitlab.lnu.se']
-      }
-    }
-  }))
 
-  app.use(express.urlencoded({ extended: false }))
-  app.use(express.json())
-  app.use(express.static(join(directoryFullName, '..', '/public')))
+  app.use(express.json({ extended: false }))
+  app.use(express.urlencoded({ extended: true }))
 
-  app.use(session(sessionOptions))
+  // Test the connection.
+  const [rows] = await dbPool.query('SELECT 1')
+  console.log(`Database connection seccessful: ${rows}`)
 
-  app.set('serviceProvider', serviceProvider)
-
-  console.log('Setup middleware...')
+  // Middleware to be executed before the routes.
   app.use((req, res, next) => {
-    res.locals.baseURL = baseURL
+    // Attach the db pool instance to the request object.
+    req.db = dbPool
     next()
   })
 
-  console.log('Register routes...')
+  // Register routes.
   app.use('/', router)
 
+  // Handle errors.
   app.use((error, req, res, next) => {
     console.error(error)
-
     // Handle 404
     if (error.status === 404) {
       // Display a custom 404 page.
       res
         .status(404)
+        .send('Resource not found.')
       return
     }
 
-    // Handle 403
-    if (error.status === 403) {
+    // Handle 400
+    if (error.status === 400) {
       // Display a custom 403 page.
       res
-        .status(403)
+        .status(400)
+        .send('Bad request')
       return
     }
 
-    // DEV ONLY
+    // Handle 401
+    if (error.status === 401) {
+      // Display a custom 403 page.
+      res
+        .status(401)
+        .send('Unauthorized')
+      return
+    }
+
     res
       .status(error.status || 500)
+      .send('An internal error has occurred.')
   })
 
   // Start the HTTP server listening for connections.
